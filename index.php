@@ -1,4 +1,5 @@
 <?php
+//index.php
 require_once 'auth.php';  // Include authentication file
 require_once 'BookAPI.php'; // Include BookAPI file
 

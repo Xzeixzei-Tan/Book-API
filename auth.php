@@ -1,5 +1,5 @@
-//auth.php
 <?php
+//auth.php
 // Start the session
 session_start();
 
