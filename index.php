@@ -2,9 +2,15 @@
 //index.php
 require_once 'auth.php';  // Include authentication file
 require_once 'BookAPI.php'; // Include BookAPI file
+require_once 'vendor/autoload.php'; // Include Composer autoload to access Firebase JWT
 
-// Get the current user role
-$userRole = getUserRole(); // Returns 'guest', 'user', or 'admin'
+
+// Get the current user role from JWT
+$userRole = 'guest';  // Default to 'guest'
+if (isset($_SERVER['HTTP_AUTHORIZATION'])) {
+    $jwt = trim(str_replace('Bearer', '', $_SERVER['HTTP_AUTHORIZATION']));
+    $userRole = getUserRole($jwt);
+}
 
 // Initialize the BookAPI class
 $bookAPI = new BookAPI();
@@ -32,8 +38,9 @@ if (strpos($endpoint, '/login') !== false && $method === 'POST') {
     
     try {
         if (authenticate($username, $password)) {
-            // Send the login success message and stop further execution
-            echo json_encode(["message" => "Login successful", "role" => $_SESSION['role']]);
+            $user = ['username' => $username, 'role' => $_SESSION['role']];
+            $token = generateJWT($user);  // Generate JWT token for the logged-in user
+            echo json_encode(["message" => "Login successful", "role" => $_SESSION['role'], "token" => $token]);
             exit();  
         } else {
             // Return 401 Unauthorized for invalid credentials
@@ -57,81 +64,47 @@ if (strpos($endpoint, '/login') !== false && $method === 'POST') {
 
 // Handle API requests for book viewing, searching, etc.
 if (strpos($endpoint, '/books') !== false) {
-    // Book related API actions
-    if ($method === 'GET') {
+    // Check if the request is for a single book
+    if (preg_match('/\/books\/(\d+)$/', $endpoint, $matches) && $method === 'GET') {
+        // Fetch a book by ID
+        $bookId = $matches[1];
         try {
-            if (isset($_GET['genre'])) {
-                // Fetch books by genre(s)
-                $bookAPI->getBooksByGenre($_GET['genre'], $userRole);
-            } elseif (isset($_GET['search'])) {
-                // Fetch books based on search query (title or author)
-                $searchQuery = $_GET['search'];
+            $bookAPI->getBookById($bookId, $userRole);
+        } catch (Exception $e) {
+            handleError("Error fetching book: " . $e->getMessage());
+        }
+    } elseif ($method === 'GET') {
+        // Handle book listing or search
+        if (isset($_GET['genre'])) {
+            // Fetch books by genre(s)
+            $bookAPI->getBooksByGenre($_GET['genre'], $userRole);
+        } elseif (isset($_GET['search'])) {
+            // Fetch books based on search query (title or author)
+            $searchQuery = $_GET['search'];
 
-                // Check if the search query is empty
-                if (empty($searchQuery)) {
-                    // Return 400 error if search query is empty
-                    handleError("Search query is required", 400);
-                }
-
-                $books = $bookAPI->searchBooks($searchQuery, $userRole);
-
-                // If no books are found for the search query
-                if (empty($books)) {
-                    handleError("No books found for the search query", 404);
-                }
-
-                // Return the books if found
-                echo json_encode($books);
-                exit(); // Make sure to exit after sending the response
-            } else {
-                // Fetch all books
-                $bookAPI->getBooks($userRole);
+            // Check if the search query is empty
+            if (empty($searchQuery)) {
+                // Return 400 error if search query is empty
+                handleError("Search query is required", 400);
             }
-        } catch (Exception $e) {
-            // Return 500 Internal Server Error if any exception occurs while fetching books
-            handleError("Internal server error while fetching books: " . $e->getMessage());
-        }
-    }
 
-    // Only allow adding, updating, or deleting books for admins
-    if ($method === 'POST' && isAuthorized('admin')) {
-        // Check if required book data is provided
-        if (empty($_POST['title']) || empty($_POST['author']) || empty($_POST['genre'])) {
-            // Return 400 Bad Request if required fields are missing
-            handleError("Title, author, and genre are required", 400);
-        }
+            $books = $bookAPI->searchBooks($searchQuery, $userRole);
 
-        try {
-            // Add the book
-            $bookAPI->addBook($userRole);
-        } catch (Exception $e) {
-            // Return 500 Internal Server Error if something goes wrong while adding the book
-            handleError("Internal server error while adding the book: " . $e->getMessage());
-        }
-    } elseif ($method === 'PUT' && isAuthorized('admin')) {
-        // Check if the ID and required data are provided for updating
-        if (empty($_GET['id']) || empty($_POST['title']) || empty($_POST['author']) || empty($_POST['genre'])) {
-            // Return 400 Bad Request if any required field is missing
-            handleError("Book ID, title, author, and genre are required for updating", 400);
-        }
+            // If no books are found for the search query
+            if (empty($books)) {
+                handleError("No books found for the search query", 404);
+            }
 
-        try {
-            // Update the book
-            $bookAPI->updateBook($_GET['id'], $userRole);
-        } catch (Exception $e) {
-            // Return 500 Internal Server Error if something goes wrong while updating the book
-            handleError("Internal server error while updating the book: " . $e->getMessage());
-        }
-    } elseif ($method === 'DELETE' && isAuthorized('admin')) {
-        try {
-            // Delete the book
-            $bookAPI->deleteBook($_GET['id'], $userRole);
-        } catch (Exception $e) {
-            // Return 500 Internal Server Error if something goes wrong while deleting the book
-            handleError("Internal server error while deleting the book: " . $e->getMessage());
+            // Return the books if found
+            echo json_encode($books);
+            exit(); // Make sure to exit after sending the response
+        } else {
+            // Fetch all books
+            $bookAPI->getBooks($userRole);
         }
     }
 } else {
     // Return an error for invalid endpoints
     handleError("Invalid API endpoint", 404);
 }
+?>
